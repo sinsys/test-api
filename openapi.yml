@@ -1,0 +1,214 @@
+openapi: "3.0.1"
+
+info:
+  title: REPLACED_IN_SCRIPT
+  description: REPLACED_IN_SCRIPT
+  version: "2020-07-31"
+
+servers:
+- url: REPLACED_IN_SCRIPT
+
+paths:
+  /hello:
+    get:
+      summary: "Get a custom greeting!"
+      security:
+        - auth: []
+      parameters:
+        - in: "query"
+          name: "name"
+          required: true
+          schema:
+            type: "string"
+          description: "The name to be greeted"
+      x-amazon-apigateway-integration:
+        type: aws
+        httpMethod: POST # API Gateway Integration requires method to be POST
+        credentials: REPLACED_IN_SCRIPT
+        uri: REPLACED_IN_SCRIPT
+        passthroughBehavior: never
+        requestTemplates:
+          application/json: |
+            #set($allParams = $input.params())
+            #set($headers = $allParams.get('header'))
+            #set($pathParams = $allParams.get('path'))
+            #set($queryParams = $allParams.get('querystring'))
+            {
+              "method": "$context.httpMethod",
+              "url": "$context.domainName$context.resourcePath",
+              "headers": {
+                #foreach($headerName in $headers.keySet())
+                "$headerName": "$util.escapeJavaScript($headers.get($headerName))"
+                #if($foreach.hasNext),#end
+                #end
+              },
+              "pathParams": {
+                #foreach($paramName in $pathParams.keySet())
+                "$paramName": "$util.escapeJavaScript($pathParams.get($paramName))"
+                #if($foreach.hasNext),#end
+                #end
+              },
+              "queryParams": {
+                #foreach($paramName in $queryParams.keySet())
+                "$paramName": "$util.escapeJavaScript($queryParams.get($paramName))"
+                #if($foreach.hasNext),#end
+                #end
+              },
+              "body": $input.json('$'),
+              "principalId": "$context.authorizer.principalId"
+            }
+        responses:
+          "default":
+            statusCode: "200"
+            responseParameters:
+              method.response.header.Access-Control-Allow-Origin: '''*'''
+          "^\\[BadRequest\\].*":
+            statusCode: "400"
+            responseParameters:
+              method.response.header.Access-Control-Allow-Origin: '''*'''
+            responseTemplates:
+              application/json: |
+                {
+                  "message" : $input.path('$.errorMessage')
+                }
+          "^\\[NotFound\\].*":
+            statusCode: "404"
+            responseParameters:
+              method.response.header.Access-Control-Allow-Origin: '''*'''
+            responseTemplates:
+              application/json: |
+                {
+                  "message" : $input.path('$.errorMessage')
+                }
+          "^\\[InternalServerError\\].*":
+            statusCode: "500"
+            responseParameters:
+              method.response.header.Access-Control-Allow-Origin: '''*'''
+            responseTemplates:
+              application/json: |
+                {
+                  "message" : $input.path('$.errorMessage')
+                }
+      x-amazon-apigateway-request-validator: params-only
+      responses:
+        200:
+          description: "OK"
+          headers:
+            Access-Control-Allow-Origin:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+        400:
+          description: "Bad request"
+          headers:
+            Access-Control-Allow-Origin:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+        404:
+          description: "Not found"
+          headers:
+            Access-Control-Allow-Origin:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+        500:
+          description: "Internal server error"
+          headers:
+            Access-Control-Allow-Origin:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    # https://docs.aws.amazon.com/apigateway/latest/developerguide/enable-cors-for-resource-using-swagger-importer-tool.html
+    options:
+      summary: CORS support
+      description: |
+        Enable CORS by returning correct headers
+      tags:
+      - CORS
+      responses:
+        200:
+          description: Default response for CORS method
+          headers:
+            Access-Control-Allow-Origin:
+              schema:
+                type: string
+            Access-Control-Allow-Methods:
+              schema:
+                type: string
+            Access-Control-Allow-Headers:
+              schema:
+                type: string
+          content: {}
+      x-amazon-apigateway-integration:
+        type: mock
+        requestTemplates:
+          application/json: |
+            {
+              "statusCode" : 200
+            }
+        responses:
+          default:
+            statusCode: "200"
+            responseParameters:
+              method.response.header.Access-Control-Allow-Headers: '''Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,authorizationtoken'''
+              method.response.header.Access-Control-Allow-Methods: '''GET''' # TODO: UPDATE TO ALLOW CORRECT METHOD
+              method.response.header.Access-Control-Allow-Origin: '''*'''
+            responseTemplates:
+              application/json: |
+                {}
+
+# https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-swagger-extensions-request-validators.html
+x-amazon-apigateway-request-validators:
+  all:
+    validateRequestBody: true
+    validateRequestParameters: true
+  params-only:
+    validateRequestBody: false
+    validateRequestParameters: true
+
+components:
+  schemas:
+    SuccessResponse:
+      type: object
+      properties:
+          output:
+            type: string
+          input:
+            type: object
+            properties:
+              name:
+                type: string
+
+    ErrorResponse:
+      type: object
+      properties:
+        message:
+          type: string
+
+  securitySchemes:
+    auth:
+      type: apiKey
+      name: authorizationToken
+      in: header
+      x-amazon-apigateway-authtype: custom
+      x-amazon-apigateway-authorizer:
+        type: token
+        authorizerUri: REPLACED_IN_SCRIPT
+        authorizerCredentials: REPLACED_IN_SCRIPT
+        authorizerResultTtlInSeconds: 0

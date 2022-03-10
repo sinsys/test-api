@@ -1,0 +1,262 @@
+trigger:
+  - dev
+  - int
+  - prod
+
+resources:
+  repositories:
+    - repository: taskgroup
+      type: git
+      name: pipeline-templates
+      ref: refs/heads/main
+
+variables:
+  LAMBDA_NAME: swiftterm-test-api
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+stages:
+- stage: VALIDATE
+  condition: always()
+  variables:
+  - group: dev_core_common
+  jobs:
+  - job: build_and_validate
+    displayName: Build and Validate
+    steps:
+    - checkout: self
+    - checkout: taskgroup
+
+    - task: NodeTool@0
+      inputs:
+        versionSpec: 12.x
+      displayName: Install Node.js
+
+    - task: Npm@1
+      displayName: Install dependencies
+      inputs:
+        command: ci
+        workingDir: $(Build.Repository.Name)
+
+    - script: npm run validate:ci
+      displayName: Type + lint checking
+      workingDirectory: $(Build.Repository.Name)
+
+    - script: npm run test
+      displayName: Run Unit Tests
+      workingDirectory: $(Build.Repository.Name)
+
+    - task: PublishCodeCoverageResults@1
+      displayName: Publish code coverage results
+      condition: succeededOrFailed()
+      inputs:
+        codeCoverageTool: Cobertura
+        summaryFileLocation: $(Build.Repository.Name)/coverage/cobertura-coverage.xml
+        failIfCoverageEmpty: true
+        failTaskOnFailedTests: true
+
+    - template: publish-coverage-to-s3.yml@taskgroup
+      parameters:
+        awsCredentials: buildAgent-swiftterm@STDev
+        awsRegion: $(AWS_REGION)
+
+    #https://github.com/MicrosoftPremier/VstsExtensions/blob/master/BuildQualityChecks/en-US/CodeCoveragePolicy.md
+    - task: BuildQualityChecks@7
+      displayName: 'Check build quality based on code test coverage'
+      inputs:
+        checkCoverage: true # enable build quality
+        coverageFailOption: 'fixed' # coverage percentage is a fixed value
+        coverageType: 'lines' # check coverage based on lines of code
+        coverageThreshold: 70 # required minimum coverage percentage
+
+    - bash: echo "##vso[task.setvariable variable=jobId;isOutput=true]$(System.JobId)"
+      name: set_job_id
+      displayName: Store build_and_validate Job ID
+
+- stage: DEV
+  dependsOn:
+  - VALIDATE
+  condition: and(succeeded('VALIDATE'), ne(variables['Build.Reason'], 'PullRequest'), notIn(variables['Build.SourceBranch'], 'refs/heads/int', 'refs/heads/prod'))
+  variables:
+  - group: dev_core_common
+  - group: openapi_dev
+  jobs:
+  - template: deployment-steps.yml@taskgroup
+    parameters:
+      stageName: dev
+      deploySteps:
+        - checkout: self
+        - checkout: taskgroup
+
+        - task: NodeTool@0
+          inputs:
+            versionSpec: 12.x
+          displayName: Install Node.js
+
+        - task: Npm@1
+          displayName: Install dependencies
+          inputs:
+            command: ci
+            workingDir: $(Build.Repository.Name)
+
+        - template: deploy-serverless.yml@taskgroup
+          parameters:
+            awsCredentials: buildAgent-swiftterm@STDev
+            awsRegion: $(AWS_REGION)
+            stageName: $(STAGE)
+
+        - template: lambda-logging.yml@taskgroup
+          parameters:
+            awsCredentials: buildAgent-swiftterm@STDev
+            awsAccountId: $(AWS_ACCOUNT_ID)
+            awsRegion: $(AWS_REGION)
+            stageName: $(STAGE)
+            lambdaLoggerName: $(UNIVERSAL_LOGGER_NAME)
+            lambdaName: $(LAMBDA_NAME)
+
+        - template: configure-openapi.yml@taskgroup
+          parameters:
+            awsAccountId: $(AWS_ACCOUNT_ID)
+            awsRegion: $(AWS_REGION)
+            stageName: $(STAGE)
+            lambdaName: $(LAMBDA_NAME)
+            apiGatewayId: $(API_GW_ID)
+            apiGatewayName: $(API_GW_NAME)
+            apiGatewayDesc: $(API_GW_DESC)
+            basePath: $(BASE_PATH)
+        
+        - template: deploy-api-swagger-to-s3.yml@taskgroup
+          parameters:
+            awsCredentials: buildAgent-swiftterm@STDev
+            awsRegion: $(AWS_REGION)
+            stageName: $(STAGE)
+            apiGatewayId: $(API_GW_ID)
+            apiGatewayName: $(API_GW_NAME)
+            swaggerDocDirectory: $(SWAGGER_DOC_DIRECTORY_SWIFTTERM)
+
+- stage: INT
+  dependsOn:
+  - VALIDATE
+  condition: and(succeeded('VALIDATE'), in(variables['Build.Reason'], 'IndividualCI', 'BatchedCI'), eq(variables['Build.SourceBranch'], 'refs/heads/int'))
+  variables:
+  - group: int_core_common
+  - group: openapi_int
+  jobs:
+  - template: deployment-steps.yml@taskgroup
+    parameters:
+      stageName: int
+      deploySteps:
+        - checkout: self
+        - checkout: taskgroup
+
+        - task: NodeTool@0
+          inputs:
+            versionSpec: 12.x
+          displayName: Install Node.js
+
+        - task: Npm@1
+          displayName: Install dependencies
+          inputs:
+            command: ci
+            workingDir: $(Build.Repository.Name)
+
+        - template: deploy-serverless.yml@taskgroup
+          parameters:
+            awsCredentials: buildAgent-swiftterm@STInt
+            awsRegion: $(AWS_REGION)
+            stageName: $(STAGE)
+
+        - template: lambda-logging.yml@taskgroup
+          parameters:
+            awsCredentials: buildAgent-swiftterm@STInt
+            awsAccountId: $(AWS_ACCOUNT_ID)
+            awsRegion: $(AWS_REGION)
+            stageName: $(STAGE)
+            lambdaLoggerName: $(UNIVERSAL_LOGGER_NAME)
+            lambdaName: $(LAMBDA_NAME)
+
+        - template: configure-openapi.yml@taskgroup
+          parameters:
+            awsAccountId: $(AWS_ACCOUNT_ID)
+            awsRegion: $(AWS_REGION)
+            stageName: $(STAGE)
+            lambdaName: $(LAMBDA_NAME)
+            apiGatewayId: $(API_GW_ID)
+            apiGatewayName: $(API_GW_NAME)
+            apiGatewayDesc: $(API_GW_DESC)
+            basePath: $(BASE_PATH)
+
+        - template: deploy-api-swagger-to-s3.yml@taskgroup
+          parameters:
+            awsCredentials: buildAgent-swiftterm@STInt
+            awsRegion: $(AWS_REGION)
+            stageName: $(STAGE)
+            apiGatewayId: $(API_GW_ID)
+            apiGatewayName: $(API_GW_NAME)
+            swaggerDocDirectory: $(SWAGGER_DOC_DIRECTORY_SWIFTTERM)
+
+# Executes a PRE_PROD stage to set CR window variables
+- template: create-cr-window.yml@taskgroup
+
+- stage: PROD
+  dependsOn:
+  - VALIDATE
+  - PRE_PROD
+  condition: and(succeeded('PRE_PROD'), in(variables['Build.Reason'], 'IndividualCI', 'BatchedCI'), eq(variables['Build.SourceBranch'], 'refs/heads/prod'))
+  variables:
+  - group: prod_core_common
+  - group: openapi_prod
+  jobs:
+  - template: deployment-steps.yml@taskgroup
+    parameters:
+      stageName: prod
+      deploySteps:
+        - checkout: self
+        - checkout: taskgroup
+
+        - task: NodeTool@0
+          inputs:
+            versionSpec: 12.x
+          displayName: Install Node.js
+
+        - task: Npm@1
+          displayName: Install dependencies
+          inputs:
+            command: ci
+            workingDir: $(Build.Repository.Name)
+
+        - template: deploy-serverless.yml@taskgroup
+          parameters:
+            awsCredentials: buildAgent-swiftterm@STPrd
+            awsRegion: $(AWS_REGION)
+            stageName: $(STAGE)
+
+        - template: lambda-logging.yml@taskgroup
+          parameters:
+            awsCredentials: buildAgent-swiftterm@STPrd
+            awsAccountId: $(AWS_ACCOUNT_ID)
+            awsRegion: $(AWS_REGION)
+            stageName: $(STAGE)
+            lambdaLoggerName: $(UNIVERSAL_LOGGER_NAME)
+            lambdaName: $(LAMBDA_NAME)
+
+        - template: configure-openapi.yml@taskgroup
+          parameters:
+            awsAccountId: $(AWS_ACCOUNT_ID)
+            awsRegion: $(AWS_REGION)
+            stageName: $(STAGE)
+            lambdaName: $(LAMBDA_NAME)
+            apiGatewayId: $(API_GW_ID)
+            apiGatewayName: $(API_GW_NAME)
+            apiGatewayDesc: $(API_GW_DESC)
+            basePath: $(BASE_PATH)
+
+        - template: deploy-api-swagger-to-s3.yml@taskgroup
+          parameters:
+            awsCredentials: buildAgent-swiftterm@STPrd
+            awsRegion: $(AWS_REGION)
+            stageName: $(STAGE)
+            apiGatewayId: $(API_GW_ID)
+            apiGatewayName: $(API_GW_NAME)
+            swaggerDocDirectory: $(SWAGGER_DOC_DIRECTORY_SWIFTTERM)
